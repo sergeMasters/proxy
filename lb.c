@@ -3,13 +3,19 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-
+#include <netinet/in.h>
+#include <fcntl.h>
+#include <resolv.h>
+#include <pthread.h>
 
 #include "queue.h"
 
-#define PIC_PENALTY 2;
-#define VIDEO_PENALTY 3;
-#define MUSIC_PENALTY 2;
+#define PIC_PENALTY 2
+#define VIDEO_PENALTY 3
+#define MUSIC_PENALTY 2
+
+#define MAX_SIZE 3
+#define RECV_SIZE 5
 
 #define ip1 "192.168.0.101"
 #define ip2 "192.168.0.102"
@@ -22,26 +28,26 @@
 				printf("failed to open server sockets\n "); \
 				return -1; \
 			} \
-			if(open_servers(serv+1,ip2)){ \
+			if(open_servers(&serv[1],ip2)){ \
 				printf("failed to open server sockets\n "); \
 				return -1; \
 			} \
-			if(open_servers(serv+2,ip3)){ \
+			if(open_servers(&serv[2],ip3)){ \
 				printf("failed to open server sockets\n "); \
 				return -1; \
 			}}while(0)
 			
-handler_t serv[3];
-
 typedef struct handler_type{
 	int sfd; //socket fd
-	JobQueue* queue;
+	JobQueue queue;
 	int load;
 } handler_t;
 
+handler_t serv[3];
+
 void* handler(void* param){
 	handler_t* h = (handler_t*) param;
-	char* buf[MAX_SIZE];
+	char buf[MAX_SIZE];
 	while(1){
 		Job job;
 		if((job = dequeue(h->queue)){
@@ -56,8 +62,8 @@ void* handler(void* param){
 	return NULL;
 }
 
-int getMin(L1,L2,L3){
-	int tmp = L1 < L2 ? L1 : l2;
+int getMin(int L1,int L2,int L3){
+	int tmp = L1 < L2 ? L1 : L2;
 	return tmp < L3 ? tmp : L3;
 }
 
@@ -79,7 +85,7 @@ int choose_best_server(char* buf){
 }
 void listener(){
 	int sfd;
-	struct sockaddr_in serv_addr;
+	struct sockaddr_in serv_addr,out_addr;
 	sfd = socket(AF_INET,SOCK_STREAM,0);
 	if(sfd < 0){
 		printf("Error opening socket\n");
@@ -96,8 +102,8 @@ void listener(){
 		printf("Failed to listen\n");
 		return;
 	 }
-	 char* buf[RECV_SIZE];
-	 while(true){
+	 char buf[RECV_SIZE];
+	 while(1){
 		socklen_t socksize = sizeof(struct sockaddr);
 		int clientSock = accept(sfd,(struct sockaddr*)&out_addr,&socksize);
 		if(recv(clientSock,buf,2,0)<0){
@@ -124,7 +130,7 @@ int open_servers(handler_t* h,char* ip){
 		perror(ip);
 		return -1;
 	}
-	if(connect(h->sfd,(struct sockaddr*)serv_addr,sizeof(serv_addr))<0){
+	if(connect(h->sfd,(struct sockaddr*)&serv_addr,sizeof(serv_addr))<0){
 		printf("failed to connect to server socket %d\n",h->sfd);
 		return -1;
 	}
@@ -132,15 +138,15 @@ int open_servers(handler_t* h,char* ip){
 }
 int start_threads(){
 	pthread_t server1, server2, server3;
-	if(pthread_create(server1,NULL,handler,(void*)serv)<0){
+	if(pthread_create(&server1,NULL,handler,(void*)serv)<0){
 		printf("failed to create server handler thread1\n");
 		return -1;
 	}
-	if(pthread_create(server2,NULL,handler,(void*)(serv+1))<0){
+	if(pthread_create(&server2,NULL,handler,(void*)(serv+1))<0){
 		printf("failed to create server handler thread2\n");
 		return -1;
 	}
-	if(pthread_create(server3,NULL,handler,(void*)(serv+2))<0){
+	if(pthread_create(&server3,NULL,handler,(void*)(serv+2))<0){
 		printf("failed to create server handler thread3\n");
 		return -1;
 	}
@@ -153,7 +159,7 @@ int main(){
 	__OPEN_SERVERS;
 	if(start_threads()<0){
 		for(int i=0;i<3;++i){
-			serv[i].queue = destroy_jobqueue();
+			destroy_jobqueue(serv[i].queue);
 		}
 		return -1;
 	}
