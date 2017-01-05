@@ -5,11 +5,11 @@
 #include <stdlib.h>
 #include <netinet/in.h>
 #include <fcntl.h>
-#include <resolv.h>
+//#include <resolv.h>
 #include <pthread.h>
-
+#include <unistd.h>
 #include "queue.h"
-
+#include <arpa/inet.h>
 #define PIC_PENALTY 2
 #define VIDEO_PENALTY 3
 #define MUSIC_PENALTY 2
@@ -46,15 +46,17 @@ typedef struct handler_type{
 handler_t serv[3];
 
 void* handler(void* param){
+	printf("handler started\n");
 	handler_t* h = (handler_t*) param;
 	char buf[MAX_SIZE];
 	while(1){
 		Job job;
-		if((job = dequeue(h->queue)){
+		if((job = dequeue(h->queue))){
 			send(h->sfd,job,2,0);
-			int ret = recv(h->sfd,buf,MAX_SIZE,0); //recv is a blocking call;
+			int ret = recv(h->sfd,buf,2,0); //recv is a blocking call;
 			send(job->clientfd,buf,ret,0);
-			close(job->cientfd);
+			h->load -= (buf[1]-'0');
+			close(job->clientfd);
 			destroy_job(job);
 		}
 		
@@ -64,7 +66,14 @@ void* handler(void* param){
 
 int getMin(int L1,int L2,int L3){
 	int tmp = L1 < L2 ? L1 : L2;
-	return tmp < L3 ? tmp : L3;
+	tmp = tmp < L3 ? tmp : L3;
+	if(tmp == L1){
+		return 0;
+	}else if(tmp == L2){
+		return 1;
+	}else{
+		return 2;
+	}
 }
 
 int choose_best_server(char* buf){
@@ -74,12 +83,19 @@ int choose_best_server(char* buf){
 		case 'M':
 			best =  getMin(serv[0].load+length*MUSIC_PENALTY,serv[1].load+length*MUSIC_PENALTY,serv[2].load+length);
 			serv[best].load+= best<2?length*MUSIC_PENALTY:length;
+			break;
 		case 'V':
 			best =  getMin(serv[0].load+length,serv[1].load+length,serv[2].load+length*VIDEO_PENALTY);
 			serv[best].load+= best==2?length*VIDEO_PENALTY:length;
+			break;
 		case 'P':
 			best =  getMin(serv[0].load+length,serv[1].load+length,serv[2].load+length*PIC_PENALTY);
 			serv[best].load+= best==2?length*PIC_PENALTY:length;
+			break;
+	}
+	if(best<0){
+		printf("something went wrong trying to find min server\n");
+		exit(1);
 	}
 	return best;
 }
@@ -126,7 +142,7 @@ int open_servers(handler_t* h,char* ip){
 		printf("failed to create server socket");
 		return -1;
 	}
-	if(inet_aton(ip,&serv_addr.sin_addr.s_addr)<0){
+	if(inet_aton(ip,&serv_addr.sin_addr)<0){
 		perror(ip);
 		return -1;
 	}
@@ -154,6 +170,10 @@ int start_threads(){
 int main(){	
 	for(int i=0;i<3;++i){
 		serv[i].queue = create_jobqueue();
+		if(!serv[i].queue){
+			printf("failed to create jobqueue %d\n",i);
+			return -1;
+		}
 		serv[i].load = 0;
 	}
 	__OPEN_SERVERS;
